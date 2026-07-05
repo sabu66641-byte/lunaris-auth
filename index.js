@@ -18,45 +18,54 @@ app.use((req, res, next) => {
 });
 
 // ===== ENV =====
-const TOKEN = process.env.TOKEN;
-const GUILD_ID = process.env.GUILD_ID;
-const ROLE_ID = process.env.ROLE_ID;
-const CHANNEL_ID = process.env.CHANNEL_ID;
-const SITE_URL = process.env.SITE_URL;
-const PORT = process.env.PORT || 3000;
+const {
+    TOKEN,
+    CLIENT_ID,
+    CLIENT_SECRET,
+    REDIRECT_URI,
+    GUILD_ID,
+    ROLE_ID,
+    CHANNEL_ID,
+    SITE_URL,
+    PORT = 3000
+} = process.env;
 
 // ===== DISCORD CLIENT =====
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
-// ===== OAuth + ROLE =====
+// ======================
+// OAuth → Role付与
+// ======================
 app.post("/exchange", async (req, res) => {
     try {
         const code = req.body?.code;
         if (!code) return res.status(400).json({ error: "no_code" });
 
-        // 1. token取得
+        // 1) token取得
         const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
             method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
             body: new URLSearchParams({
-                client_id: process.env.CLIENT_ID,
-                client_secret: process.env.CLIENT_SECRET,
+                client_id: CLIENT_ID,
+                client_secret: CLIENT_SECRET,
                 grant_type: "authorization_code",
                 code,
-                redirect_uri: process.env.REDIRECT_URI,
-                scope: "identify guilds.join"
-            })
+                redirect_uri: REDIRECT_URI
+            }).toString()
         });
 
         const tokenData = await tokenRes.json();
+
         if (!tokenData.access_token) {
             console.log("TOKEN ERROR:", tokenData);
             return res.status(400).json({ error: "token_failed" });
         }
 
-        // 2. user取得
+        // 2) user取得
         const userRes = await fetch("https://discord.com/api/users/@me", {
             headers: {
                 Authorization: `Bearer ${tokenData.access_token}`
@@ -70,24 +79,25 @@ app.post("/exchange", async (req, res) => {
 
         console.log("USER:", user.id);
 
-        // 3. guild
+        // 3) guild取得
         const guild = await client.guilds.fetch(GUILD_ID);
 
-        // 4. member取得（強制）
-        const member = await guild.members.fetch(user.id);
-
-        // 5. role取得
-        const role = await guild.roles.fetch(ROLE_ID);
-
-        // 6. すでに持ってる場合スキップ
-        if (member.roles.cache.has(role.id)) {
-            return res.json({ ok: true, already: true });
+        // 4) member取得
+        const member = await guild.members.fetch(user.id).catch(() => null);
+        if (!member) {
+            return res.status(404).json({ error: "member_not_found" });
         }
 
-        // 7. 付与
+        // 5) role取得
+        const role = await guild.roles.fetch(ROLE_ID);
+        if (!role) {
+            return res.status(404).json({ error: "role_not_found" });
+        }
+
+        // 6) 付与
         await member.roles.add(role.id);
 
-        console.log("ROLE ADDED SUCCESS:", user.id);
+        console.log("ROLE ADDED:", user.id);
 
         return res.json({ ok: true });
 
@@ -97,28 +107,42 @@ app.post("/exchange", async (req, res) => {
     }
 });
 
-// ===== BOT起動時メッセージ =====
+// ======================
+// Bot起動時メッセージ（1回だけ）
+// ======================
+let sent = false;
+
 client.once(Events.ClientReady, async () => {
+    if (sent) return;
+    sent = true;
+
     console.log(`${client.user.tag} READY`);
 
-    const channel = await client.channels.fetch(CHANNEL_ID);
+    try {
+        const channel = await client.channels.fetch(CHANNEL_ID);
 
-    const embed = new EmbedBuilder()
-        .setTitle("Lunaris Verification Gateway")
-        .setDescription("認証ボタンを押してください")
-        .setColor(0x1E40AF);
+        const embed = new EmbedBuilder()
+            .setTitle("Verification Gateway")
+            .setDescription("認証ボタンを押してください")
+            .setColor(0x1E40AF);
 
-    const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setLabel("認証開始")
-            .setStyle(ButtonStyle.Link)
-            .setURL(SITE_URL)
-    );
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setLabel("認証開始")
+                .setStyle(ButtonStyle.Link)
+                .setURL(SITE_URL)
+        );
 
-    await channel.send({ embeds: [embed], components: [row] });
-    console.log("VERIFY MESSAGE SENT");
+        await channel.send({ embeds: [embed], components: [row] });
+
+        console.log("VERIFY MESSAGE SENT");
+    } catch (e) {
+        console.log("READY ERROR:", e);
+        sent = false;
+    }
 });
 
+// ======================
 client.login(TOKEN);
 
 app.listen(PORT, () => {
