@@ -98,12 +98,12 @@ app.post("/exchange", async (req, res) => {
 });
 
 // ===== BOT起動時メッセージ =====
-let sent = false;
+client.once(Events.ClientReady, async () => {
+    let sent = false;
 
 client.once(Events.ClientReady, async () => {
     if (sent) return;
     sent = true;
-
     console.log(`${client.user.tag} READY`);
 
     const channel = await client.channels.fetch(CHANNEL_ID);
@@ -121,7 +121,6 @@ client.once(Events.ClientReady, async () => {
     );
 
     await channel.send({ embeds: [embed], components: [row] });
-
     console.log("VERIFY MESSAGE SENT");
 });
 
