@@ -97,6 +97,25 @@ app.post("/complete", async (req, res) => {
     }
 });
 
+app.post("/exchange", async (req, res) => {
+    try {
+        const code = req.body?.code;
+
+        console.log("EXCHANGE HIT:", code);
+
+        if (!code) {
+            return res.status(400).json({ error: "no_code" });
+        }
+
+        // とりあえず動作確認（ここ重要）
+        return res.json({ ok: true });
+
+    } catch (err) {
+        console.log("EXCHANGE ERROR:", err);
+        return res.status(500).json({ error: "server_error" });
+    }
+});
+
 app.get("/ping", (req, res) => {
     console.log("PING OK");
     res.send("pong");
