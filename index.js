@@ -1,9 +1,18 @@
 console.log("FILE LOADED");
 
 require("dotenv").config();
-const fetch = require("node-fetch");
 const express = require("express");
-const { Client, GatewayIntentBits, Events, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const {
+    Client,
+    GatewayIntentBits,
+    Events,
+    EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle
+} = require("discord.js");
+
+const fetch = globalThis.fetch; // ← ここ重要（node-fetch削除）
 
 const app = express();
 app.use(express.json());
@@ -32,7 +41,10 @@ const {
 
 // ===== DISCORD CLIENT =====
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers
+    ]
 });
 
 // ======================
@@ -43,7 +55,7 @@ app.post("/exchange", async (req, res) => {
         const code = req.body?.code;
         if (!code) return res.status(400).json({ error: "no_code" });
 
-        // 1) token取得
+        // 1. token取得
         const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
             method: "POST",
             headers: {
@@ -65,7 +77,7 @@ app.post("/exchange", async (req, res) => {
             return res.status(400).json({ error: "token_failed" });
         }
 
-        // 2) user取得
+        // 2. user取得
         const userRes = await fetch("https://discord.com/api/users/@me", {
             headers: {
                 Authorization: `Bearer ${tokenData.access_token}`
@@ -79,22 +91,27 @@ app.post("/exchange", async (req, res) => {
 
         console.log("USER:", user.id);
 
-        // 3) guild取得
+        // 3. guild取得
         const guild = await client.guilds.fetch(GUILD_ID);
 
-        // 4) member取得
+        // 4. member取得
         const member = await guild.members.fetch(user.id).catch(() => null);
         if (!member) {
             return res.status(404).json({ error: "member_not_found" });
         }
 
-        // 5) role取得
+        // 5. role取得
         const role = await guild.roles.fetch(ROLE_ID);
         if (!role) {
             return res.status(404).json({ error: "role_not_found" });
         }
 
-        // 6) 付与
+        // 6. すでに持ってるならスキップ
+        if (member.roles.cache.has(role.id)) {
+            return res.json({ ok: true, already: true });
+        }
+
+        // 7. 付与
         await member.roles.add(role.id);
 
         console.log("ROLE ADDED:", user.id);
@@ -133,12 +150,14 @@ client.once(Events.ClientReady, async () => {
                 .setURL(SITE_URL)
         );
 
-        await channel.send({ embeds: [embed], components: [row] });
+        await channel.send({
+            embeds: [embed],
+            components: [row]
+        });
 
         console.log("VERIFY MESSAGE SENT");
-    } catch (e) {
-        console.log("READY ERROR:", e);
-        sent = false;
+    } catch (err) {
+        console.log("READY ERROR:", err);
     }
 });
 
