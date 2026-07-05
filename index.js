@@ -27,52 +27,81 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
-// ====== ① ロール付与API（サイトが最後に叩く） ======
+// ====== 共通のロール付与関数 ======
+async function assignRole(userId) {
+    const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
+    if (!guild) return { success: false, error: "Guild not found" };
+
+    const member = await guild.members.fetch(userId).catch(() => null);
+    if (!member) return { success: false, error: "Member not found" };
+
+    const role = await guild.roles.fetch(ROLE_ID).catch(() => null);
+    if (!role) return { success: false, error: "Role not found" };
+
+    if (!member.roles.cache.has(role.id)) {
+        await member.roles.add(role.id);
+    }
+    console.log(`[SUCCESS] Role assigned to: ${userId}`);
+    return { success: true };
+}
+
+// ====== ① ロール付与API ======
+// もしサイトが code ではなく直接 userId を送ってきた場合もここで処理します
 app.post("/complete", async (req, res) => {
     try {
         const userId = req.body?.userId;
-        if (!userId) return res.status(400).json({ error: "Missing userId" });
+        const code = req.body?.code;
 
-        // 指定のサーバーを取得
-        const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
-        if (!guild) return res.status(500).json({ error: "Guild not found" });
-
-        // メンバーを取得
-        const member = await guild.members.fetch(userId).catch(() => null);
-        if (!member) return res.status(404).json({ error: "Member not found in guild" });
-
-        // ロールを取得
-        const role = await guild.roles.fetch(ROLE_ID).catch(() => null);
-        if (!role) return res.status(500).json({ error: "Role not found" });
-
-        // すでに持っていればそのまま成功を返す（エラーで落とさない）
-        if (member.roles.cache.has(role.id)) {
-            return res.json({ ok: true, message: "Already verified" });
+        // もし userId ではなく code が直接送られてきた場合は、まずIDに引き換える
+        if (!userId && code) {
+            const userIdFromCode = await exchangeCodeToId(code);
+            if (!userIdFromCode) return res.status(400).json({ error: "Invalid code" });
+            const result = await assignRole(userIdFromCode);
+            if (!result.success) return res.status(500).json({ error: result.error });
+            return res.json({ ok: true, userId: userIdFromCode });
         }
 
-        // ロール付与
-        await member.roles.add(role.id);
-        console.log(`[SUCCESS] Role added to user: ${userId}`);
+        if (!userId) return res.status(400).json({ error: "Missing identity data" });
+
+        const result = await assignRole(userId);
+        if (!result.success) return res.status(500).json({ error: result.error });
 
         return res.json({ ok: true });
     } catch (err) {
-        console.error("COMPLETE API ERROR:", err);
-        return res.status(500).json({ error: "Internal server error" });
+        console.error("COMPLETE ERROR:", err);
+        return res.status(500).json({ error: "failed" });
     }
 });
 
-// ====== ② トークン交換API（Discord認証の直後にサイトが叩く） ======
+// ====== ② トークン交換API ======
+// サイトが最初に code を送ってきた際、IDを返すと同時に、その場でロールも付与してしまいます
 app.post("/exchange", async (req, res) => {
     try {
         const code = req.body.code;
         if (!code) return res.status(400).json({ error: "no code" });
 
-        // Discordにcodeを送ってトークンを貰う
+        const userId = await exchangeCodeToId(code);
+        if (!userId) return res.status(500).json({ error: "Token exchange failed" });
+
+        // 【超重要】サイト側が次に進む前に、ボット側で先回リしてロールを付与してしまう
+        await assignRole(userId);
+
+        return res.json({
+            userId: userId
+        });
+
+    } catch (err) {
+        console.error("EXCHANGE ERROR:", err);
+        return res.status(500).json({ error: "failed" });
+    }
+});
+
+// DiscordのcodeをユーザーIDに変換する共通ヘルパー
+async function exchangeCodeToId(code) {
+    try {
         const tokenRes = await fetch("https://discord.com", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded"
-            },
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: new URLSearchParams({
                 client_id: process.env.CLIENT_ID,
                 client_secret: process.env.CLIENT_SECRET,
@@ -82,51 +111,29 @@ app.post("/exchange", async (req, res) => {
             })
         });
 
-        if (!tokenRes.ok) {
-            const errData = await tokenRes.json().catch(() => ({}));
-            return res.status(tokenRes.status).json({ error: "Token exchange failed", details: errData });
-        }
-
+        if (!tokenRes.ok) return null;
         const tokenData = await tokenRes.json();
 
-        // トークンを使ってユーザーの情報を取得
         const userRes = await fetch("https://discord.com", {
-            headers: {
-                Authorization: `Bearer ${tokenData.access_token}`
-            }
+            headers: { Authorization: `Bearer ${tokenData.access_token}` }
         });
 
-        if (!userRes.ok) return res.status(userRes.status).json({ error: "Failed to fetch user" });
-
+        if (!userRes.ok) return null;
         const user = await userRes.json();
-
-        // サイト側にユーザーIDを返す（サイトがこれを受け取って /complete を叩く）
-        return res.json({
-            userId: user.id
-        });
-
-    } catch (err) {
-        console.error("EXCHANGE API ERROR:", err);
-        return res.status(500).json({ error: "failed" });
+        return user.id;
+    } catch {
+        return null;
     }
-});
+}
 
-// ====== ③ 起動・チャンネルへの埋め込みメッセージ送信 ======
+// ====== ③ 起動メッセージ ======
 client.once(Events.ClientReady, async () => {
     console.log(`${client.user.tag} READY`);
-
     try {
-        const channel = await client.channels.fetch(process.env.CHANNEL_ID).catch(() => null);
-        if (!channel || !channel.isTextBased()) {
-            console.error("Channel not found or is not text-based");
-            return;
-        }
+        const channel = await client.channels.fetch(process.env.CHANNEL_ID);
+        const messages = await channel.messages.fetch({ limit: 50 });
+        const existingMsg = messages.find(m => m.author.id === client.user.id && m.embeds?.title === "Lunaris Verification Gateway");
 
-        // チャンネル内の過去50件を取得して重複がないかチェック
-        const messages = await channel.messages.fetch({ limit: 50 }).catch(() => []);
-        const existingMsg = messages.find(m => m.author.id === client.user.id && m.embeds?.[0]?.data?.title === "Lunaris Verification Gateway");
-
-        // 既にメッセージがあれば新しく送らない
         if (!existingMsg) {
             const embed = new EmbedBuilder()
                 .setTitle("Lunaris Verification Gateway")
@@ -141,18 +148,14 @@ client.once(Events.ClientReady, async () => {
             );
 
             await channel.send({ embeds: [embed], components: [row] });
-            console.log("VERIFY MESSAGE SENT");
-        } else {
-            console.log("VERIFY MESSAGE ALREADY EXISTS (SKIPPED)");
         }
     } catch (err) {
-        console.error("READY EVENT ERROR:", err);
+        console.error("READY ERROR:", err);
     }
 });
 
 client.login(TOKEN);
 
-// ====== Expressサーバー起動 ======
 app.listen(PORT, () => {
-    console.log("API RUNNING ON PORT", PORT);
+    console.log("API RUNNING ON", PORT);
 });
