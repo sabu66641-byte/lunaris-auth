@@ -27,7 +27,7 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
-// ====== ロール付与API（サイトが完了画面を出す瞬間にここを叩きます） ======
+// ====== ロール付与API ======
 app.post("/complete", async (req, res) => {
     try {
         const userId = req.body?.userId;
@@ -42,16 +42,13 @@ app.post("/complete", async (req, res) => {
         const role = await guild.roles.fetch(ROLE_ID).catch(() => null);
         if (!role) return res.status(500).end();
 
-        // すでにロールを持っていても、サイト側に「成功」を返して完了画面を出させる
         if (member.roles.cache.has(role.id)) {
             return res.json({ ok: true });
         }
 
-        // 認証を完了した人にロールを付与
         await member.roles.add(role.id);
         console.log(`[SUCCESS] ロールを付与しました: ${userId}`);
 
-        // サイト側に成功を返す
         return res.json({ ok: true });
     } catch (err) {
         console.log("ERROR:", err);
@@ -107,9 +104,9 @@ client.once(Events.ClientReady, async () => {
         const channel = await client.channels.fetch(process.env.CHANNEL_ID);
         if (!channel || !channel.isTextBased()) return;
 
-        // 【修正】botが再起動するたびにメッセージが増えてしまうのを防止する
+        // 【修正】構文エラーの原因だった「?.?.」を正しいオプショナルチェイニングの記述に修正しました
         const messages = await channel.messages.fetch({ limit: 50 }).catch(() => []);
-        const existingMsg = messages.find(m => m.author.id === client.user.id && m.embeds?.?.title === "Lunaris Verification Gateway");
+        const existingMsg = messages.find(m => m.author.id === client.user.id && m.embeds && m.embeds[0] && m.embeds[0].title === "Lunaris Verification Gateway");
 
         if (!existingMsg) {
             const embed = new EmbedBuilder()
@@ -140,7 +137,7 @@ client.once(Events.ClientReady, async () => {
 
 client.login(TOKEN);
 
-// Renderウェブサービスの起動維持用
+// ヘルスチェック用
 app.get("/", (req, res) => res.send("Bot Active"));
 
 app.listen(PORT, () => {
