@@ -78,6 +78,47 @@ client.once(Events.ClientReady, async () => {
 client.login(TOKEN);
 
 // ====== EXPRESS START ======
+
+app.post("/exchange", async (req, res) => {
+    try {
+        const code = req.body.code;
+
+        if (!code) return res.status(400).json({ error: "no code" });
+
+        const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: new URLSearchParams({
+                client_id: process.env.CLIENT_ID,
+                client_secret: process.env.CLIENT_SECRET,
+                grant_type: "authorization_code",
+                code,
+                redirect_uri: process.env.REDIRECT_URI
+            })
+        });
+
+        const tokenData = await tokenRes.json();
+
+        const userRes = await fetch("https://discord.com/api/users/@me", {
+            headers: {
+                Authorization: `Bearer ${tokenData.access_token}`
+            }
+        });
+
+        const user = await userRes.json();
+
+        return res.json({
+            userId: user.id
+        });
+
+    } catch (err) {
+        console.log("EXCHANGE ERROR:", err);
+        return res.status(500).json({ error: "failed" });
+    }
+});
+
 app.listen(PORT, () => {
     console.log("API RUNNING ON", PORT);
 });
