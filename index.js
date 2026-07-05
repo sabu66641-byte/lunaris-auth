@@ -50,35 +50,39 @@ app.post("/complete", async (req, res) => {
     try {
         const userId = req.body?.userId;
 
-        console.log("COMPLETE HIT:", userId);
-
         if (!userId) {
             return res.status(400).json({ error: "no_userId" });
         }
 
         const guild = await client.guilds.fetch(GUILD_ID);
 
-        const member = await guild.members.fetch(userId);
-        const role = await guild.roles.fetch(ROLE_ID);
+        // メンバー取得（強制最新）
+        const member = await guild.members.fetch(userId, { force: true });
 
         if (!member) {
-            console.log("MEMBER NOT FOUND");
             return res.status(404).json({ error: "member_not_found" });
         }
 
+        const role = await guild.roles.fetch(ROLE_ID);
+
         if (!role) {
-            console.log("ROLE NOT FOUND");
             return res.status(404).json({ error: "role_not_found" });
         }
 
+        // すでに持ってる場合はスキップ（同時実行対策）
+        if (member.roles.cache.has(role.id)) {
+            return res.json({ ok: true, already: true });
+        }
+
+        // 付与
         await member.roles.add(role.id);
 
-        console.log("ROLE ADDED SUCCESS:", userId);
+        // 反映確認（Discordキャッシュ対策）
+        await member.fetch(true);
 
         return res.json({ ok: true });
 
     } catch (err) {
-        console.log("COMPLETE ERROR:", err);
         return res.status(500).json({
             ok: false,
             error: err.message
