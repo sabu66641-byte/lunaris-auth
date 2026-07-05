@@ -69,7 +69,9 @@ app.post("/exchange", async (req, res) => {
                 redirect_uri: REDIRECT_URI
             }).toString()
         });
-
+        const text = await tokenRes.text();
+        console.log("TOKEN RAW RESPONSE:", text);
+        
         const tokenData = await tokenRes.json();
 
         if (!tokenData.access_token) {
