@@ -101,18 +101,61 @@ app.post("/exchange", async (req, res) => {
     try {
         const code = req.body?.code;
 
-        console.log("EXCHANGE HIT:", code);
-
         if (!code) {
             return res.status(400).json({ error: "no_code" });
         }
 
-        // とりあえず動作確認（ここ重要）
+        // ① code → access_token 交換
+        const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: new URLSearchParams({
+                client_id: process.env.CLIENT_ID,
+                client_secret: process.env.CLIENT_SECRET,
+                grant_type: "authorization_code",
+                code: code,
+                redirect_uri: process.env.REDIRECT_URI,
+                scope: "identify guilds.join"
+            })
+        });
+
+        const tokenData = await tokenRes.json();
+
+        if (!tokenData.access_token) {
+            console.log("TOKEN ERROR:", tokenData);
+            return res.status(400).json({ error: "token_failed", details: tokenData });
+        }
+
+        // ② ユーザー情報取得
+        const userRes = await fetch("https://discord.com/api/users/@me", {
+            headers: {
+                Authorization: `Bearer ${tokenData.access_token}`
+            }
+        });
+
+        const user = await userRes.json();
+        const userId = user.id;
+
+        console.log("USER:", userId);
+
+        // ③ ギルド取得
+        const guild = await client.guilds.fetch(process.env.GUILD_ID);
+
+        // ④ メンバー取得
+        const member = await guild.members.fetch(userId);
+
+        // ⑤ ロール付与
+        await member.roles.add(process.env.ROLE_ID);
+
+        console.log("ROLE ADDED:", userId);
+
         return res.json({ ok: true });
 
     } catch (err) {
         console.log("EXCHANGE ERROR:", err);
-        return res.status(500).json({ error: "server_error" });
+        return res.status(500).json({ error: "server_error", message: err.message });
     }
 });
 
