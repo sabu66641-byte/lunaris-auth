@@ -98,36 +98,25 @@ app.post("/exchange", async (req, res) => {
 });
 
 // ===== BOT起動時メッセージ =====
-let sent = false;
-
 client.once(Events.ClientReady, async () => {
-    if (sent) return;
-    sent = true;
-
     console.log(`${client.user.tag} READY`);
 
-    try {
-        const channel = await client.channels.fetch(CHANNEL_ID);
+    const channel = await client.channels.fetch(CHANNEL_ID);
 
-        const embed = new EmbedBuilder()
-            .setTitle("Lunaris Verification Gateway")
-            .setDescription("認証ボタンを押してください")
-            .setColor(0x1E40AF);
+    const embed = new EmbedBuilder()
+        .setTitle("Lunaris Verification Gateway")
+        .setDescription("認証ボタンを押してください")
+        .setColor(0x1E40AF);
 
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setLabel("認証開始")
-                .setStyle(ButtonStyle.Link)
-                .setURL(SITE_URL)
-        );
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setLabel("認証開始")
+            .setStyle(ButtonStyle.Link)
+            .setURL(SITE_URL)
+    );
 
-        await channel.send({ embeds: [embed], components: [row] });
-
-        console.log("VERIFY MESSAGE SENT");
-    } catch (err) {
-        console.log("READY ERROR:", err);
-        sent = false;
-    }
+    await channel.send({ embeds: [embed], components: [row] });
+    console.log("VERIFY MESSAGE SENT");
 });
 
 client.login(TOKEN);
