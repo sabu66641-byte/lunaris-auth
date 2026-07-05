@@ -99,6 +99,11 @@ app.post("/exchange", async (req, res) => {
 
 // ===== BOT起動時メッセージ =====
 client.once(Events.ClientReady, async () => {
+    let sent = false;
+
+client.once(Events.ClientReady, async () => {
+    if (sent) return;
+    sent = true;
     console.log(`${client.user.tag} READY`);
 
     const channel = await client.channels.fetch(CHANNEL_ID);
