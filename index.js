@@ -58,44 +58,34 @@ app.post("/complete", async (req, res) => {
 
         const guild = await client.guilds.fetch(GUILD_ID);
 
-        const member = await guild.members.fetch(userId).catch(err => {
-            console.log("MEMBER FETCH ERROR:", err);
-            return null;
-        });
+        const member = await guild.members.fetch(userId);
+        const role = await guild.roles.fetch(ROLE_ID);
 
         if (!member) {
             console.log("MEMBER NOT FOUND");
             return res.status(404).json({ error: "member_not_found" });
         }
 
-        const role = await guild.roles.fetch(ROLE_ID).catch(err => {
-            console.log("ROLE FETCH ERROR:", err);
-            return null;
-        });
-
         if (!role) {
             console.log("ROLE NOT FOUND");
             return res.status(404).json({ error: "role_not_found" });
         }
 
-        try {
-            await member.roles.add(role.id);
-            console.log("ROLE ADDED SUCCESS");
-        } catch (err) {
-            console.log("ROLE ADD FAILED:", err);
-            return res.status(500).json({
-                error: "role_add_failed",
-                message: err.message
-            });
-        }
+        await member.roles.add(role.id);
+
+        console.log("ROLE ADDED SUCCESS:", userId);
 
         return res.json({ ok: true });
 
     } catch (err) {
         console.log("COMPLETE ERROR:", err);
-        return res.status(500).json({ error: "server_error" });
+        return res.status(500).json({
+            ok: false,
+            error: err.message
+        });
     }
 });
+
 
 app.post("/exchange", async (req, res) => {
     try {
