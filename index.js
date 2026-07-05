@@ -6,66 +6,54 @@ const express = require("express");
 const {
     Client,
     GatewayIntentBits,
+    Events,
     EmbedBuilder,
     ActionRowBuilder,
     ButtonBuilder,
-    ButtonStyle,
-    Events
+    ButtonStyle
 } = require("discord.js");
 
-const fetch = require("node-fetch");
+const app = express();
+app.use(express.json());
 
-// =====================
-// 環境変数
-// =====================
+// ====== ENV ======
 const TOKEN = process.env.TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const ROLE_ID = process.env.ROLE_ID;
-const CHANNEL_ID = process.env.CHANNEL_ID;
 const PORT = process.env.PORT || 3000;
 
-// =====================
-// Discord
-// =====================
+// ====== DISCORD CLIENT ======
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers
-    ]
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
-// =====================
-// ボタン処理
-// =====================
-client.on("interactionCreate", async (interaction) => {
-    if (!interaction.isButton()) return;
-    if (interaction.customId !== "verify_start") return;
+// ====== ロール付与API（サイトから呼ぶ） ======
+app.post("/complete", async (req, res) => {
+    try {
+        const userId = req.body?.userId;
+        if (!userId) return res.status(400).end();
 
-    console.log("BUTTON PRESSED");
+        const guild = await client.guilds.fetch(GUILD_ID);
+        const member = await guild.members.fetch(userId).catch(() => null);
+        if (!member) return res.status(404).end();
 
-    await interaction.reply({
-        content: "認証中...",
-        ephemeral: true
-    });
+        const role = await guild.roles.fetch(ROLE_ID).catch(() => null);
+        if (!role) return res.status(500).end();
 
-    await fetch(`http://localhost:${PORT}/complete`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            userId: interaction.user.id
-        })
-    });
+        await member.roles.add(role.id);
+
+        return res.json({ ok: true });
+    } catch (err) {
+        console.log("ERROR:", err);
+        return res.status(500).end();
+    }
 });
 
-// =====================
-// 起動時メッセージ
-// =====================
+// ====== 起動 ======
 client.once(Events.ClientReady, async () => {
     console.log(`${client.user.tag} READY`);
 
-    const channel = await client.channels.fetch(CHANNEL_ID);
+    const channel = await client.channels.fetch(process.env.CHANNEL_ID);
 
     const embed = new EmbedBuilder()
         .setTitle("Lunaris Verification Gateway")
@@ -74,51 +62,22 @@ client.once(Events.ClientReady, async () => {
 
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-            .setCustomId("verify_start")
             .setLabel("認証開始")
-            .setStyle(ButtonStyle.Primary)
+            .setStyle(ButtonStyle.Link)
+            .setURL(process.env.SITE_URL)
     );
 
     await channel.send({
         embeds: [embed],
         components: [row]
     });
-});
 
-// =====================
-// ロール付与API
-// =====================
-const app = express();
-app.use(express.json());
-
-app.post("/complete", async (req, res) => {
-    console.log("COMPLETE HIT");
-
-    const userId = req.body?.userId;
-    if (!userId) return res.status(400).end();
-
-    try {
-        const guild = await client.guilds.fetch(GUILD_ID);
-        const member = await guild.members.fetch(userId);
-        const role = await guild.roles.fetch(ROLE_ID);
-
-        await member.roles.add(role.id);
-
-        console.log("ROLE ADDED");
-
-        return res.json({ ok: true });
-
-    } catch (err) {
-        console.log("ERROR:", err);
-        return res.status(500).end();
-    }
-});
-
-// =====================
-// 起動
-// =====================
-app.listen(PORT, () => {
-    console.log("API RUNNING ON", PORT);
+    console.log("VERIFY MESSAGE SENT");
 });
 
 client.login(TOKEN);
+
+// ====== EXPRESS START ======
+app.listen(PORT, () => {
+    console.log("API RUNNING ON", PORT);
+});
