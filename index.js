@@ -1,35 +1,23 @@
 console.log("FILE LOADED");
 
 require("dotenv").config();
-
 const fetch = require("node-fetch");
-
 const express = require("express");
-const {
-    Client,
-    GatewayIntentBits,
-    Events,
-    EmbedBuilder,
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle
-} = require("discord.js");
+const { Client, GatewayIntentBits, Events, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 
 const app = express();
+app.use(express.json());
+
+// ===== CORS =====
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Headers", "*");
     res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-
-    if (req.method === "OPTIONS") {
-        return res.sendStatus(200);
-    }
-
+    if (req.method === "OPTIONS") return res.sendStatus(200);
     next();
 });
-app.use(express.json());
 
-// ====== ENV ======
+// ===== ENV =====
 const TOKEN = process.env.TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const ROLE_ID = process.env.ROLE_ID;
@@ -37,92 +25,38 @@ const CHANNEL_ID = process.env.CHANNEL_ID;
 const SITE_URL = process.env.SITE_URL;
 const PORT = process.env.PORT || 3000;
 
-// ====== DISCORD CLIENT ======
+// ===== DISCORD CLIENT =====
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers
-    ]
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
-// ====== /complete（ロール付与） ======
-app.post("/complete", async (req, res) => {
-    try {
-        const userId = req.body?.userId;
-
-        if (!userId) {
-            return res.status(400).json({ error: "no_userId" });
-        }
-
-        const guild = await client.guilds.fetch(GUILD_ID);
-
-        // メンバー取得（強制最新）
-        const member = await guild.members.fetch(userId, { force: true });
-
-        if (!member) {
-            return res.status(404).json({ error: "member_not_found" });
-        }
-
-        const role = await guild.roles.fetch(ROLE_ID);
-
-        if (!role) {
-            return res.status(404).json({ error: "role_not_found" });
-        }
-
-        // すでに持ってる場合はスキップ（同時実行対策）
-        if (member.roles.cache.has(role.id)) {
-            return res.json({ ok: true, already: true });
-        }
-
-        // 付与
-        await member.roles.add(role.id);
-
-        // 反映確認（Discordキャッシュ対策）
-        await member.fetch(true);
-
-        return res.json({ ok: true });
-
-    } catch (err) {
-        return res.status(500).json({
-            ok: false,
-            error: err.message
-        });
-    }
-});
-
-
+// ===== OAuth + ROLE =====
 app.post("/exchange", async (req, res) => {
     try {
         const code = req.body?.code;
+        if (!code) return res.status(400).json({ error: "no_code" });
 
-        if (!code) {
-            return res.status(400).json({ error: "no_code" });
-        }
-
-        // ① code → access_token 交換
+        // 1. token取得
         const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded"
-            },
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: new URLSearchParams({
                 client_id: process.env.CLIENT_ID,
                 client_secret: process.env.CLIENT_SECRET,
                 grant_type: "authorization_code",
-                code: code,
+                code,
                 redirect_uri: process.env.REDIRECT_URI,
                 scope: "identify guilds.join"
             })
         });
 
         const tokenData = await tokenRes.json();
-
         if (!tokenData.access_token) {
             console.log("TOKEN ERROR:", tokenData);
-            return res.status(400).json({ error: "token_failed", details: tokenData });
+            return res.status(400).json({ error: "token_failed" });
         }
 
-        // ② ユーザー情報取得
+        // 2. user取得
         const userRes = await fetch("https://discord.com/api/users/@me", {
             headers: {
                 Authorization: `Bearer ${tokenData.access_token}`
@@ -130,35 +64,40 @@ app.post("/exchange", async (req, res) => {
         });
 
         const user = await userRes.json();
-        const userId = user.id;
+        if (!user.id) {
+            return res.status(400).json({ error: "user_failed" });
+        }
 
-        console.log("USER:", userId);
+        console.log("USER:", user.id);
 
-        // ③ ギルド取得
-        const guild = await client.guilds.fetch(process.env.GUILD_ID);
+        // 3. guild
+        const guild = await client.guilds.fetch(GUILD_ID);
 
-        // ④ メンバー取得
-        const member = await guild.members.fetch(userId);
+        // 4. member取得（強制）
+        const member = await guild.members.fetch(user.id);
 
-        // ⑤ ロール付与
-        await member.roles.add(process.env.ROLE_ID);
+        // 5. role取得
+        const role = await guild.roles.fetch(ROLE_ID);
 
-        console.log("ROLE ADDED:", userId);
+        // 6. すでに持ってる場合スキップ
+        if (member.roles.cache.has(role.id)) {
+            return res.json({ ok: true, already: true });
+        }
+
+        // 7. 付与
+        await member.roles.add(role.id);
+
+        console.log("ROLE ADDED SUCCESS:", user.id);
 
         return res.json({ ok: true });
 
     } catch (err) {
         console.log("EXCHANGE ERROR:", err);
-        return res.status(500).json({ error: "server_error", message: err.message });
+        return res.status(500).json({ ok: false, error: err.message });
     }
 });
 
-app.get("/ping", (req, res) => {
-    console.log("PING OK");
-    res.send("pong");
-});
-
-// ====== BOT起動 ======
+// ===== BOT起動時メッセージ =====
 client.once(Events.ClientReady, async () => {
     console.log(`${client.user.tag} READY`);
 
@@ -166,7 +105,7 @@ client.once(Events.ClientReady, async () => {
 
     const embed = new EmbedBuilder()
         .setTitle("Lunaris Verification Gateway")
-        .setDescription("以下のボタンから認証を開始してください")
+        .setDescription("認証ボタンを押してください")
         .setColor(0x1E40AF);
 
     const row = new ActionRowBuilder().addComponents(
@@ -176,15 +115,10 @@ client.once(Events.ClientReady, async () => {
             .setURL(SITE_URL)
     );
 
-    await channel.send({
-        embeds: [embed],
-        components: [row]
-    });
-
+    await channel.send({ embeds: [embed], components: [row] });
     console.log("VERIFY MESSAGE SENT");
 });
 
-// ====== START ======
 client.login(TOKEN);
 
 app.listen(PORT, () => {
