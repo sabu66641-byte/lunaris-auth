@@ -1,6 +1,7 @@
 console.log("FILE LOADED");
 
 require("dotenv").config();
+
 const express = require("express");
 const {
     Client,
@@ -31,26 +32,59 @@ const client = new Client({
     ]
 });
 
-// ====== ロール付与API ======
+// ====== /complete（ロール付与） ======
 app.post("/complete", async (req, res) => {
     try {
         const userId = req.body?.userId;
-        if (!userId) return res.status(400).json({ error: "no userId" });
+
+        console.log("COMPLETE HIT:", userId);
+
+        if (!userId) {
+            return res.status(400).json({ error: "no_userId" });
+        }
 
         const guild = await client.guilds.fetch(GUILD_ID);
-        const member = await guild.members.fetch(userId);
 
-        const role = await guild.roles.fetch(ROLE_ID);
-        await member.roles.add(role.id);
+        const member = await guild.members.fetch(userId).catch(err => {
+            console.log("MEMBER FETCH ERROR:", err);
+            return null;
+        });
+
+        if (!member) {
+            console.log("MEMBER NOT FOUND");
+            return res.status(404).json({ error: "member_not_found" });
+        }
+
+        const role = await guild.roles.fetch(ROLE_ID).catch(err => {
+            console.log("ROLE FETCH ERROR:", err);
+            return null;
+        });
+
+        if (!role) {
+            console.log("ROLE NOT FOUND");
+            return res.status(404).json({ error: "role_not_found" });
+        }
+
+        try {
+            await member.roles.add(role.id);
+            console.log("ROLE ADDED SUCCESS");
+        } catch (err) {
+            console.log("ROLE ADD FAILED:", err);
+            return res.status(500).json({
+                error: "role_add_failed",
+                message: err.message
+            });
+        }
 
         return res.json({ ok: true });
+
     } catch (err) {
-        console.log("ROLE ERROR:", err);
-        return res.status(500).json({ error: "role_failed" });
+        console.log("COMPLETE ERROR:", err);
+        return res.status(500).json({ error: "server_error" });
     }
 });
 
-// ====== BOT起動時メッセージ送信 ======
+// ====== BOT起動 ======
 client.once(Events.ClientReady, async () => {
     console.log(`${client.user.tag} READY`);
 
@@ -76,7 +110,7 @@ client.once(Events.ClientReady, async () => {
     console.log("VERIFY MESSAGE SENT");
 });
 
-// ====== サーバー起動 ======
+// ====== START ======
 client.login(TOKEN);
 
 app.listen(PORT, () => {
