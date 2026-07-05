@@ -84,6 +84,11 @@ app.post("/complete", async (req, res) => {
     }
 });
 
+app.get("/ping", (req, res) => {
+    console.log("PING OK");
+    res.send("pong");
+});
+
 // ====== BOT起動 ======
 client.once(Events.ClientReady, async () => {
     console.log(`${client.user.tag} READY`);
