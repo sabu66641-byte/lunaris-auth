@@ -57,21 +57,10 @@ app.get("/ping", (req, res) => {
 // ======================
 // OAuth exchange
 // ======================
-
-// 🔥 追加：観測用カウンタ
-let exchangeCount = 0;
-
 const usedCodes = new Set();
 const processingCodes = new Set();
 
 app.post("/exchange", async (req, res) => {
-    exchangeCount++;
-
-    // 🔥 追加：基本観測ログ
-    console.log("==== EXCHANGE HIT ====");
-    console.log("COUNT:", exchangeCount);
-    console.log("IP:", req.ip);
-
     try {
         const code = req.body.code;
 
@@ -79,6 +68,7 @@ app.post("/exchange", async (req, res) => {
             return res.status(400).json({ ok: false, error: "NO_CODE" });
         }
 
+        // 🚫 同じcodeを再利用禁止
         if (usedCodes.has(code)) {
             return res.status(400).json({
                 ok: false,
@@ -86,6 +76,7 @@ app.post("/exchange", async (req, res) => {
             });
         }
 
+        // 🚫 同時実行防止
         if (processingCodes.has(code)) {
             return res.status(429).json({
                 ok: false,
@@ -142,6 +133,7 @@ app.post("/exchange", async (req, res) => {
             });
         }
 
+        // USER取得
         const userRes = await fetch("https://discord.com/api/users/@me", {
             headers: {
                 Authorization: `Bearer ${token.access_token}`
@@ -165,6 +157,7 @@ app.post("/exchange", async (req, res) => {
             await member.roles.add(ROLE_ID);
         }
 
+        // ✅ 成功したらcode使用済みにする
         usedCodes.add(code);
         processingCodes.delete(code);
 
