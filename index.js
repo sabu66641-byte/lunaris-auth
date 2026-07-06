@@ -17,6 +17,7 @@ const {
 const app = express();
 app.use(express.json());
 
+// CORS
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Headers", "*");
@@ -25,6 +26,7 @@ app.use((req, res, next) => {
     next();
 });
 
+// ENV
 const {
     TOKEN,
     CLIENT_ID,
@@ -37,6 +39,7 @@ const {
     PORT = 3000
 } = process.env;
 
+// Discord bot
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -44,10 +47,16 @@ const client = new Client({
     ]
 });
 
+// ======================
+// health check
+// ======================
 app.get("/ping", (req, res) => {
     res.send("pong");
 });
 
+// ======================
+// OAuth exchange
+// ======================
 app.post("/exchange", async (req, res) => {
     try {
         const code = req.body.code;
@@ -61,6 +70,9 @@ app.post("/exchange", async (req, res) => {
 
         console.log("CODE RECEIVED");
 
+        // ======================
+        // TOKEN交換
+        // ======================
         const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
             method: "POST",
             headers: {
@@ -75,42 +87,86 @@ app.post("/exchange", async (req, res) => {
             })
         });
 
-        const raw = await tokenRes.text();
+        const tokenText = await tokenRes.text();
 
         console.log("TOKEN STATUS:", tokenRes.status);
-        console.log("TOKEN RAW:", raw);
+        console.log("TOKEN RAW:", tokenText);
 
         let token;
-
         try {
-            token = JSON.parse(raw);
+            token = JSON.parse(tokenText);
         } catch {
             return res.status(500).json({
                 ok: false,
-                error: "TOKEN_NOT_JSON",
-                body: raw
+                error: "TOKEN_PARSE_ERROR",
+                raw: tokenText
             });
         }
 
         if (!token.access_token) {
             return res.status(400).json({
                 ok: false,
-                error: token
+                error: "TOKEN_NO_ACCESS",
+                detail: token
             });
         }
 
-        const user = await fetch("https://discord.com/api/users/@me", {
+        // ======================
+        // USER取得
+        // ======================
+        const userRes = await fetch("https://discord.com/api/users/@me", {
             headers: {
                 Authorization: `Bearer ${token.access_token}`
             }
-        }).then(r => r.json());
+        });
 
-        console.log("USER:", user.id);
+        const user = await userRes.json();
 
-        const guild = await client.guilds.fetch(GUILD_ID);
+        console.log("USER RESPONSE:", user);
 
-        const member = await guild.members.fetch(user.id);
+        if (!user || !user.id) {
+            return res.status(400).json({
+                ok: false,
+                error: "USER_FETCH_FAILED",
+                detail: user
+            });
+        }
 
+        console.log("USER ID:", user.id);
+
+        // ======================
+        // GUILD取得
+        // ======================
+        let guild;
+        try {
+            guild = await client.guilds.fetch(GUILD_ID);
+        } catch (err) {
+            console.error("GUILD FETCH ERROR:", err);
+            return res.status(500).json({
+                ok: false,
+                error: "GUILD_FETCH_FAILED"
+            });
+        }
+
+        // ======================
+        // MEMBER取得
+        // ======================
+        let member;
+        try {
+            member = await guild.members.fetch(user.id);
+        } catch (err) {
+            console.error("MEMBER FETCH ERROR:", err);
+
+            return res.status(500).json({
+                ok: false,
+                error: "MEMBER_FETCH_FAILED",
+                detail: err.message
+            });
+        }
+
+        // ======================
+        // ROLE付与
+        // ======================
         if (!member.roles.cache.has(ROLE_ID)) {
             await member.roles.add(ROLE_ID);
         }
@@ -122,22 +178,23 @@ app.post("/exchange", async (req, res) => {
         });
 
     } catch (err) {
-
-        console.error(err);
+        console.error("EXCHANGE FATAL ERROR:", err);
 
         return res.status(500).json({
             ok: false,
-            error: err.message
+            error: "FATAL_ERROR",
+            detail: err.message
         });
     }
 });
 
+// ======================
+// bot起動時
+// ======================
 client.once(Events.ClientReady, async () => {
-
     console.log(`${client.user.tag} READY`);
 
     try {
-
         const channel = await client.channels.fetch(CHANNEL_ID);
 
         await channel.send({
@@ -162,13 +219,18 @@ client.once(Events.ClientReady, async () => {
     } catch (err) {
         console.error("READY ERROR:", err);
     }
-
 });
 
+// ======================
+// login
+// ======================
 client.login(TOKEN)
     .then(() => console.log("LOGIN SUCCESS"))
     .catch(err => console.error("LOGIN FAILED:", err));
 
+// ======================
+// server start
+// ======================
 app.listen(PORT, () => {
     console.log("API RUNNING ON PORT", PORT);
 });
