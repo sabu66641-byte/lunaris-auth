@@ -2,9 +2,8 @@ console.log("FILE LOADED");
 
 require("dotenv").config();
 
-const fetch = require("node-fetch");
-
 const express = require("express");
+const fetch = require("node-fetch");
 const {
     Client,
     GatewayIntentBits,
@@ -16,28 +15,28 @@ const {
 } = require("discord.js");
 
 const app = express();
+app.use(express.json());
+
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Headers", "*");
     res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-
-    if (req.method === "OPTIONS") {
-        return res.sendStatus(200);
-    }
-
+    if (req.method === "OPTIONS") return res.sendStatus(200);
     next();
 });
-app.use(express.json());
 
-// ====== ENV ======
-const TOKEN = process.env.TOKEN;
-const GUILD_ID = process.env.GUILD_ID;
-const ROLE_ID = process.env.ROLE_ID;
-const CHANNEL_ID = process.env.CHANNEL_ID;
-const SITE_URL = process.env.SITE_URL;
-const PORT = process.env.PORT || 3000;
+const {
+    TOKEN,
+    CLIENT_ID,
+    CLIENT_SECRET,
+    REDIRECT_URI,
+    GUILD_ID,
+    ROLE_ID,
+    CHANNEL_ID,
+    SITE_URL,
+    PORT = 3000
+} = process.env;
 
-// ====== DISCORD CLIENT ======
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -45,44 +44,87 @@ const client = new Client({
     ]
 });
 
-// ====== /complete（ロール付与） ======
-app.post("/complete", async (req, res) => {
-    try {
-        const userId = req.body?.userId;
+app.get("/ping", (req, res) => {
+    res.send("pong");
+});
 
-        if (!userId) {
-            return res.status(400).json({ error: "no_userId" });
+app.post("/exchange", async (req, res) => {
+    try {
+        const code = req.body.code;
+
+        if (!code) {
+            return res.status(400).json({
+                ok: false,
+                error: "NO_CODE"
+            });
         }
+
+        console.log("CODE RECEIVED");
+
+        const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: new URLSearchParams({
+                client_id: CLIENT_ID,
+                client_secret: CLIENT_SECRET,
+                grant_type: "authorization_code",
+                code,
+                redirect_uri: REDIRECT_URI
+            })
+        });
+
+        const raw = await tokenRes.text();
+
+        console.log("TOKEN STATUS:", tokenRes.status);
+        console.log("TOKEN RAW:", raw);
+
+        let token;
+
+        try {
+            token = JSON.parse(raw);
+        } catch {
+            return res.status(500).json({
+                ok: false,
+                error: "TOKEN_NOT_JSON",
+                body: raw
+            });
+        }
+
+        if (!token.access_token) {
+            return res.status(400).json({
+                ok: false,
+                error: token
+            });
+        }
+
+        const user = await fetch("https://discord.com/api/users/@me", {
+            headers: {
+                Authorization: `Bearer ${token.access_token}`
+            }
+        }).then(r => r.json());
+
+        console.log("USER:", user.id);
 
         const guild = await client.guilds.fetch(GUILD_ID);
 
-        // メンバー取得（強制最新）
-        const member = await guild.members.fetch(userId, { force: true });
+        const member = await guild.members.fetch(user.id);
 
-        if (!member) {
-            return res.status(404).json({ error: "member_not_found" });
+        if (!member.roles.cache.has(ROLE_ID)) {
+            await member.roles.add(ROLE_ID);
         }
 
-        const role = await guild.roles.fetch(ROLE_ID);
+        console.log("ROLE ADDED:", user.id);
 
-        if (!role) {
-            return res.status(404).json({ error: "role_not_found" });
-        }
-
-        // すでに持ってる場合はスキップ（同時実行対策）
-        if (member.roles.cache.has(role.id)) {
-            return res.json({ ok: true, already: true });
-        }
-
-        // 付与
-        await member.roles.add(role.id);
-
-        // 反映確認（Discordキャッシュ対策）
-        await member.fetch(true);
-
-        return res.json({ ok: true });
+        return res.json({
+            ok: true
+        });
 
     } catch (err) {
+
+        console.error(err);
+
         return res.status(500).json({
             ok: false,
             error: err.message
@@ -90,103 +132,43 @@ app.post("/complete", async (req, res) => {
     }
 });
 
-
-app.post("/exchange", async (req, res) => {
-    try {
-        const code = req.body?.code;
-
-        if (!code) {
-            return res.status(400).json({ error: "no_code" });
-        }
-
-        // ① code → access_token 交換
-        const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded"
-            },
-            body: new URLSearchParams({
-                client_id: process.env.CLIENT_ID,
-                client_secret: process.env.CLIENT_SECRET,
-                grant_type: "authorization_code",
-                code: code,
-                redirect_uri: process.env.REDIRECT_URI,
-                scope: "identify guilds.join"
-            })
-        });
-
-        const tokenData = await tokenRes.json();
-
-        if (!tokenData.access_token) {
-            console.log("TOKEN ERROR:", tokenData);
-            return res.status(400).json({ error: "token_failed", details: tokenData });
-        }
-
-        // ② ユーザー情報取得
-        const userRes = await fetch("https://discord.com/api/users/@me", {
-            headers: {
-                Authorization: `Bearer ${tokenData.access_token}`
-            }
-        });
-
-        const user = await userRes.json();
-        const userId = user.id;
-
-        console.log("USER:", userId);
-
-        // ③ ギルド取得
-        const guild = await client.guilds.fetch(process.env.GUILD_ID);
-
-        // ④ メンバー取得
-        const member = await guild.members.fetch(userId);
-
-        // ⑤ ロール付与
-        await member.roles.add(process.env.ROLE_ID);
-
-        console.log("ROLE ADDED:", userId);
-
-        return res.json({ ok: true });
-
-    } catch (err) {
-        console.log("EXCHANGE ERROR:", err);
-        return res.status(500).json({ error: "server_error", message: err.message });
-    }
-});
-
-app.get("/ping", (req, res) => {
-    console.log("PING OK");
-    res.send("pong");
-});
-
-// ====== BOT起動 ======
 client.once(Events.ClientReady, async () => {
+
     console.log(`${client.user.tag} READY`);
 
-    const channel = await client.channels.fetch(CHANNEL_ID);
+    try {
 
-    const embed = new EmbedBuilder()
-        .setTitle("Lunaris Verification Gateway")
-        .setDescription("以下のボタンから認証を開始してください")
-        .setColor(0x1E40AF);
+        const channel = await client.channels.fetch(CHANNEL_ID);
 
-    const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setLabel("認証開始")
-            .setStyle(ButtonStyle.Link)
-            .setURL(SITE_URL)
-    );
+        await channel.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle("Lunaris Verification")
+                    .setDescription("下のボタンから認証してください。")
+                    .setColor(0x1E40AF)
+            ],
+            components: [
+                new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setLabel("認証開始")
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(SITE_URL)
+                )
+            ]
+        });
 
-    await channel.send({
-        embeds: [embed],
-        components: [row]
-    });
+        console.log("VERIFY MESSAGE SENT");
 
-    console.log("VERIFY MESSAGE SENT");
+    } catch (err) {
+        console.error("READY ERROR:", err);
+    }
+
 });
 
-// ====== START ======
-client.login(TOKEN);
+client.login(TOKEN)
+    .then(() => console.log("LOGIN SUCCESS"))
+    .catch(err => console.error("LOGIN FAILED:", err));
 
 app.listen(PORT, () => {
-    console.log("API RUNNING ON", PORT);
+    console.log("API RUNNING ON PORT", PORT);
 });
