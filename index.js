@@ -57,22 +57,37 @@ app.get("/ping", (req, res) => {
 // ======================
 // OAuth exchange
 // ======================
+const usedCodes = new Set();
+const processingCodes = new Set();
+
 app.post("/exchange", async (req, res) => {
     try {
         const code = req.body.code;
 
         if (!code) {
+            return res.status(400).json({ ok: false, error: "NO_CODE" });
+        }
+
+        // 🚫 同じcodeを再利用禁止
+        if (usedCodes.has(code)) {
             return res.status(400).json({
                 ok: false,
-                error: "NO_CODE"
+                error: "CODE_ALREADY_USED"
             });
         }
 
-        console.log("CODE RECEIVED");
+        // 🚫 同時実行防止
+        if (processingCodes.has(code)) {
+            return res.status(429).json({
+                ok: false,
+                error: "CODE_PROCESSING"
+            });
+        }
 
-        // ======================
-        // TOKEN交換
-        // ======================
+        processingCodes.add(code);
+
+        console.log("CODE RECEIVED:", code);
+
         const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
             method: "POST",
             headers: {
@@ -90,30 +105,35 @@ app.post("/exchange", async (req, res) => {
         const tokenText = await tokenRes.text();
 
         console.log("TOKEN STATUS:", tokenRes.status);
-        console.log("TOKEN RAW:", tokenText);
+
+        if (!tokenRes.ok) {
+            processingCodes.delete(code);
+
+            return res.status(400).json({
+                ok: false,
+                error: "TOKEN_REQUEST_FAILED",
+                status: tokenRes.status,
+                raw: tokenText
+            });
+        }
 
         let token;
         try {
             token = JSON.parse(tokenText);
         } catch {
-            return res.status(500).json({
-                ok: false,
-                error: "TOKEN_PARSE_ERROR",
-                raw: tokenText
-            });
+            processingCodes.delete(code);
+            return res.status(500).json({ ok: false, error: "TOKEN_PARSE_ERROR" });
         }
 
         if (!token.access_token) {
+            processingCodes.delete(code);
             return res.status(400).json({
                 ok: false,
-                error: "TOKEN_NO_ACCESS",
-                detail: token
+                error: "NO_ACCESS_TOKEN"
             });
         }
 
-        // ======================
         // USER取得
-        // ======================
         const userRes = await fetch("https://discord.com/api/users/@me", {
             headers: {
                 Authorization: `Bearer ${token.access_token}`
@@ -122,68 +142,33 @@ app.post("/exchange", async (req, res) => {
 
         const user = await userRes.json();
 
-        console.log("USER RESPONSE:", user);
-
-        if (!user || !user.id) {
+        if (!user.id) {
+            processingCodes.delete(code);
             return res.status(400).json({
                 ok: false,
-                error: "USER_FETCH_FAILED",
-                detail: user
+                error: "USER_FETCH_FAILED"
             });
         }
 
-        console.log("USER ID:", user.id);
+        const guild = await client.guilds.fetch(GUILD_ID);
+        const member = await guild.members.fetch(user.id);
 
-        // ======================
-        // GUILD取得
-        // ======================
-        let guild;
-        try {
-            guild = await client.guilds.fetch(GUILD_ID);
-        } catch (err) {
-            console.error("GUILD FETCH ERROR:", err);
-            return res.status(500).json({
-                ok: false,
-                error: "GUILD_FETCH_FAILED"
-            });
-        }
-
-        // ======================
-        // MEMBER取得
-        // ======================
-        let member;
-        try {
-            member = await guild.members.fetch(user.id);
-        } catch (err) {
-            console.error("MEMBER FETCH ERROR:", err);
-
-            return res.status(500).json({
-                ok: false,
-                error: "MEMBER_FETCH_FAILED",
-                detail: err.message
-            });
-        }
-
-        // ======================
-        // ROLE付与
-        // ======================
         if (!member.roles.cache.has(ROLE_ID)) {
             await member.roles.add(ROLE_ID);
         }
 
-        console.log("ROLE ADDED:", user.id);
+        // ✅ 成功したらcode使用済みにする
+        usedCodes.add(code);
+        processingCodes.delete(code);
 
-        return res.json({
-            ok: true
-        });
+        return res.json({ ok: true });
 
     } catch (err) {
-        console.error("EXCHANGE FATAL ERROR:", err);
+        console.error("EXCHANGE ERROR:", err);
 
         return res.status(500).json({
             ok: false,
-            error: "FATAL_ERROR",
-            detail: err.message
+            error: "FATAL_ERROR"
         });
     }
 });
